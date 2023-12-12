@@ -46,15 +46,21 @@ class ItemCase extends StatefulWidget {
     this.operatState = OperatState.idle,
     this.canEdit = false,
     this.onDel,
+    this.onFormat,
     this.onSizeChanged,
     this.onOperatStateChanged,
     this.onOffsetChanged,
     this.onAngleChanged,
     this.onTap,
+    this.gap,
   }) : super(key: key);
 
   @override
   _ItemCaseState createState() => _ItemCaseState();
+
+  final Offset? gap;
+
+  final void Function()? onFormat;
 
   /// 子控件
   final Widget child;
@@ -98,6 +104,8 @@ class ItemCase extends StatefulWidget {
 }
 
 class _ItemCaseState extends State<ItemCase> with SafeState<ItemCase> {
+  final GlobalKey<_ItemCaseState> _key = GlobalKey<_ItemCaseState>();
+
   /// 基础参数状态
   late SafeValueNotifier<_Config> _config;
 
@@ -216,25 +224,26 @@ class _ItemCaseState extends State<ItemCase> with SafeState<ItemCase> {
     // final double sina = math.sin(angle);
     // final double cosa = math.cos(angle);
 
-    // final Offset d = dud.delta;
-    final Offset d = dud.globalPosition;
+    final Offset d = dud.delta;
+    // final Offset d = dud.globalPosition;
+
     // d = Offset(fsina * d.dy + fcosa * d.dx, fcosa * d.dy - fsina * d.dx);
 
     // print('delta:$d');
 
-    // final Size size = _config.value.size!;
-    // double w = size.width + d.dx;
-    // double h = size.height + d.dy;
+    final Size size = _config.value.size!;
+    double w = size.width + d.dx;
+    double h = size.height + d.dy;
 
     final double min = _caseStyle.iconSize * 3;
 
-    Offset start = _config.value.offset! +
-        Offset(-_caseStyle.iconSize / 2, _caseStyle.iconSize * 2);
-    start = Offset(fsina * start.dy + fcosa * start.dx,
-        fcosa * start.dy - fsina * start.dx);
-
-    double w = d.dx - start.dx;
-    double h = d.dy - start.dy;
+    // Offset start = _config.value.offset! +
+    //     Offset(-_caseStyle.iconSize / 2, _caseStyle.iconSize * 2);
+    // // start = Offset(fsina * start.dy + fcosa * start.dx,
+    // //     fcosa * start.dy - fsina * start.dx);
+    // print('$start $d ${_config.value.size}');
+    // double w = d.dx + _config.value.size.width;
+    // double h = d.dy + _config.value.size.height;
 
     //达到极小值
     if (w < min) w = min;
@@ -279,18 +288,20 @@ class _ItemCaseState extends State<ItemCase> with SafeState<ItemCase> {
 
     if (_config.value.size == null) return;
     if (_config.value.offset == null) return;
+    print(_config.value.size);
+    final renderBox = _key.currentContext?.findRenderObject() as RenderBox;
+    print(renderBox.localToGlobal(Offset.zero));
+    final Offset start = Offset(renderBox.localToGlobal(Offset.zero).dx,
+        renderBox.localToGlobal(Offset.zero).dy);
+    final Offset global = dud.globalPosition;
+    print(start);
 
-    final Offset start = _config.value.offset!;
-    final Offset global = dud.globalPosition.translate(
-      _caseStyle.iconSize / 2,
-      -_caseStyle.iconSize * 2.5,
-    );
     final Size size = _config.value.size!;
     final Offset center =
         Offset(start.dx + size.width / 2, start.dy + size.height / 2);
     final double l = (global - center).distance;
     final double s = (global.dy - center.dy).abs();
-
+    print('$start $global ${widget.gap} $center');
     double angle = math.asin(s / l);
 
     if (global.dx < center.dx) {
@@ -311,7 +322,7 @@ class _ItemCaseState extends State<ItemCase> with SafeState<ItemCase> {
     //旋转拦截
     if (!(widget.onAngleChanged?.call(angle) ?? true)) return;
 
-    _config.value = _config.value.copy(angle: angle);
+    _config.value = _config.value.copy(angle: angle - 3 * math.pi / 4);
   }
 
   /// 旋转回0度
@@ -335,6 +346,7 @@ class _ItemCaseState extends State<ItemCase> with SafeState<ItemCase> {
   @override
   Widget build(BuildContext context) {
     return ExValueBuilder<_Config>(
+      key: widget.key,
       shouldRebuild: (_Config? p, _Config? n) =>
           p?.offset != n?.offset || p?.angle != n?.angle,
       valueListenable: _config,
@@ -354,12 +366,15 @@ class _ItemCaseState extends State<ItemCase> with SafeState<ItemCase> {
             if (_operatState != OperatState.complate) _check,
             if (widget.onDel != null && _operatState != OperatState.complate)
               _del,
+            if (widget.onFormat != null && _operatState != OperatState.complate)
+              _roate,
             if (_operatState != OperatState.complate) _scale,
           ]),
         ),
       ),
       builder: (_, _Config? c, Widget? child) {
         return Positioned(
+          key: _key,
           top: c?.offset?.dy ?? 0,
           left: c?.offset?.dx ?? 0,
           child: Transform.rotate(
@@ -427,25 +442,7 @@ class _ItemCaseState extends State<ItemCase> with SafeState<ItemCase> {
 
   /// 编辑手柄
   Widget get _edit {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: () {
-          if (_operatState == OperatState.editing) {
-            _operatState = OperatState.idle;
-          } else {
-            _operatState = OperatState.editing;
-          }
-          safeSetState(() {});
-          widget.onOperatStateChanged?.call(_operatState);
-        },
-        child: _toolCase(
-          Icon(_operatState == OperatState.editing
-              ? Icons.border_color
-              : Icons.edit),
-        ),
-      ),
-    );
+    return Container();
   }
 
   /// 删除手柄
@@ -488,18 +485,17 @@ class _ItemCaseState extends State<ItemCase> with SafeState<ItemCase> {
   Widget get _roate {
     return Positioned(
       top: 0,
-      bottom: 0,
-      right: 0,
+      left: 0,
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
-          onPanUpdate: _roateHandle,
-          onPanEnd: (_) => _changeToIdle(),
-          onDoubleTap: _turnBack,
+          onTap: () {
+            widget.onFormat?.call();
+          },
           child: _toolCase(
             const RotatedBox(
               quarterTurns: 1,
-              child: Icon(Icons.refresh),
+              child: Icon(Icons.switch_left),
             ),
           ),
         ),
@@ -515,14 +511,15 @@ class _ItemCaseState extends State<ItemCase> with SafeState<ItemCase> {
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
-          onTap: () {
-            if (_operatState != OperatState.complate) {
-              _operatState = OperatState.complate;
-              safeSetState(() {});
-              widget.onOperatStateChanged?.call(_operatState);
-            }
-          },
-          child: _toolCase(const Icon(Icons.check)),
+          onPanUpdate: _roateHandle,
+          onPanEnd: (_) => _changeToIdle(),
+          onDoubleTap: _turnBack,
+          child: _toolCase(
+            const RotatedBox(
+              quarterTurns: 1,
+              child: Icon(Icons.refresh),
+            ),
+          ),
         ),
       ),
     );

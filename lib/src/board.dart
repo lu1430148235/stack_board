@@ -12,6 +12,10 @@ import 'item_group/adaptive_text.dart';
 import 'item_group/stack_board_item.dart';
 import 'item_group/stack_drawing.dart';
 
+import 'package:stack_board/src/item_group/adaptive_text.dart';
+
+import 'package:stack_board/src/case_group/item_case.dart';
+
 /// 层叠板
 class StackBoard extends StatefulWidget {
   const StackBoard({
@@ -22,10 +26,12 @@ class StackBoard extends StatefulWidget {
     this.customBuilder,
     this.tapToCancelAllItem = false,
     this.tapItemToMoveTop = true,
+    this.gap,
   }) : super(key: key);
 
   @override
   _StackBoardState createState() => _StackBoardState();
+  final Offset? gap;
 
   /// 层叠版控制器
   final StackBoardController? controller;
@@ -59,6 +65,8 @@ class _StackBoardState extends State<StackBoard> with SafeState<StackBoard> {
   /// 生成唯一Key
   Key _getKey(int? id) => Key('StackBoardItem$id');
 
+  Map<String, GlobalKey<_AdaptiveTextCaseState>> keyMap =
+      <String, GlobalKey<_AdaptiveTextCaseState>>{};
   @override
   void initState() {
     super.initState();
@@ -74,13 +82,19 @@ class _StackBoardState extends State<StackBoard> with SafeState<StackBoard> {
   /// 添加一个
   void _add<T extends StackBoardItem>(StackBoardItem item) {
     if (_children.contains(item)) throw 'duplicate id';
+    print(item.id);
 
+    /// 生成globalkey
+    final GlobalKey<_AdaptiveTextCaseState> globalkey =
+        GlobalKey<_AdaptiveTextCaseState>();
+    keyMap['_key${item.id.toString()}'] = globalkey;
+    print(keyMap['_key${item.id}']);
     _children.add(item.copyWith(
       id: item.id ?? _lastId,
       caseStyle: item.caseStyle ?? widget.caseStyle,
     ));
-
     _lastId++;
+
     safeSetState(() {});
   }
 
@@ -98,6 +112,27 @@ class _StackBoardState extends State<StackBoard> with SafeState<StackBoard> {
         _children.firstWhere((StackBoardItem i) => i.id == id);
     _children.removeWhere((StackBoardItem i) => i.id == id);
     _children.add(item);
+
+    safeSetState(() {});
+  }
+
+  /// 排版
+  void format(int? id) {
+    if (id == null) return;
+
+    final item = keyMap['_key${id}']?.currentState;
+    final text = item?._text;
+    if (text == null) return;
+    String formatText = '';
+
+    if (text.contains('\n')) {
+      formatText = text.replaceAll('\n', '');
+      print(formatText);
+    } else {
+      formatText = text.split('').join("\n");
+    }
+
+    keyMap['_key${id}']?.currentState?.updateText(formatText);
 
     safeSetState(() {});
   }
@@ -157,7 +192,7 @@ class _StackBoardState extends State<StackBoard> with SafeState<StackBoard> {
   /// 构建项
   Widget _buildItem(StackBoardItem item) {
     Widget child = ItemCase(
-      key: _getKey(item.id),
+      key: keyMap['_key${item.id}'],
       child: Container(
         width: 150,
         height: 150,
@@ -172,13 +207,16 @@ class _StackBoardState extends State<StackBoard> with SafeState<StackBoard> {
     );
 
     if (item is AdaptiveText) {
+      print(item.data);
+
       child = AdaptiveTextCase(
-        key: _getKey(item.id),
-        adaptiveText: item,
-        onDel: () => _onDel(item),
-        onTap: () => _moveItemToTop(item.id),
-        operatState: _operatState,
-      );
+          key: keyMap['_key${item.id}'],
+          adaptiveText: item.copyWith(),
+          onDel: () => _onDel(item),
+          onTap: () => _moveItemToTop(item.id),
+          onFormat: () => format(item.id),
+          operatState: _operatState,
+          gap: widget.gap);
     } else if (item is StackDrawing) {
       child = DrawingBoardCase(
         key: _getKey(item.id),
@@ -189,7 +227,7 @@ class _StackBoardState extends State<StackBoard> with SafeState<StackBoard> {
       );
     } else {
       child = ItemCase(
-        key: _getKey(item.id),
+        key: keyMap['_key${item.id}'],
         child: item.child,
         onDel: () => _onDel(item),
         onTap: () => _moveItemToTop(item.id),
@@ -228,6 +266,12 @@ class StackBoardController {
     _stackBoardState?._remove(id);
   }
 
+  /// 清空选中
+  void unFocus() {
+    _check();
+    _stackBoardState?._unFocus();
+  }
+
   void moveItemToTop(int? id) {
     _check();
     _stackBoardState?._moveItemToTop(id);
@@ -248,5 +292,143 @@ class StackBoardController {
   /// 销毁
   void dispose() {
     _stackBoardState = null;
+  }
+}
+
+/// 默认文本样式
+const TextStyle _defaultStyle = TextStyle(fontSize: 20);
+
+/// 自适应文本外壳
+class AdaptiveTextCase extends StatefulWidget {
+  const AdaptiveTextCase({
+    Key? key,
+    required this.adaptiveText,
+    this.onDel,
+    this.operatState,
+    this.onTap,
+    this.onFormat,
+    this.gap,
+  }) : super(key: key);
+
+  @override
+  _AdaptiveTextCaseState createState() => _AdaptiveTextCaseState();
+  final void Function()? onFormat;
+
+  final Offset? gap;
+
+  /// 自适应文本对象
+  final AdaptiveText adaptiveText;
+
+  /// 移除拦截
+  final void Function()? onDel;
+
+  /// 点击回调
+  final void Function()? onTap;
+
+  /// 操作状态
+  final OperatState? operatState;
+}
+
+class _AdaptiveTextCaseState extends State<AdaptiveTextCase>
+    with SafeState<AdaptiveTextCase> {
+  /// 是否正在编辑
+  bool _isEditing = false;
+
+  /// 文本内容
+  late String _text = widget.adaptiveText.data;
+
+  /// 输入框宽度
+  double _textFieldWidth = 100;
+
+  /// 文本样式
+  TextStyle get _style => widget.adaptiveText.style ?? _defaultStyle;
+
+  /// 计算文本大小
+  Size _textSize(String text, TextStyle style) {
+    final TextPainter textPainter = TextPainter(
+        text: TextSpan(text: text, style: style),
+        maxLines: 1,
+        textDirection: TextDirection.ltr)
+      ..layout(minWidth: 0, maxWidth: double.infinity);
+    return textPainter.size;
+  }
+
+  updateText(String v) {
+    _text = v;
+
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ItemCase(
+      gap: widget.gap,
+      isCenter: false,
+      canEdit: true,
+      onTap: widget.onTap,
+      tapToEdit: widget.adaptiveText.tapToEdit,
+      child: _isEditing ? _buildEditingBox : _buildTextBox,
+      onDel: widget.onDel,
+      onFormat: widget.onFormat,
+      operatState: widget.operatState,
+      caseStyle: widget.adaptiveText.caseStyle,
+      onOperatStateChanged: (OperatState s) {
+        if (s != OperatState.editing && _isEditing) {
+          safeSetState(() => _isEditing = false);
+        } else if (s == OperatState.editing && !_isEditing) {
+          safeSetState(() => _isEditing = true);
+        }
+
+        return;
+      },
+      onSizeChanged: (Size s) {
+        final Size size = _textSize(_text, _style);
+        _textFieldWidth = size.width + 8;
+
+        return;
+      },
+    );
+  }
+
+  /// 仅文本
+  Widget get _buildTextBox {
+    return FittedBox(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Text(
+          _text,
+          style: _style,
+          textAlign: widget.adaptiveText.textAlign,
+          textDirection: widget.adaptiveText.textDirection,
+          locale: widget.adaptiveText.locale,
+          softWrap: widget.adaptiveText.softWrap,
+          overflow: widget.adaptiveText.overflow,
+          textScaleFactor: widget.adaptiveText.textScaleFactor,
+          maxLines: widget.adaptiveText.maxLines,
+          semanticsLabel: widget.adaptiveText.semanticsLabel,
+        ),
+      ),
+    );
+  }
+
+  /// 正在编辑
+  Widget get _buildEditingBox {
+    return FittedBox(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: SizedBox(
+          width: _textFieldWidth,
+          child: TextFormField(
+            autofocus: true,
+            initialValue: _text,
+            onChanged: (String v) => _text = v,
+            style: _style,
+            textAlign: widget.adaptiveText.textAlign ?? TextAlign.start,
+            textDirection: widget.adaptiveText.textDirection,
+            maxLines: widget.adaptiveText.maxLines,
+          ),
+        ),
+      ),
+    );
   }
 }
